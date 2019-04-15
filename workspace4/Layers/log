@@ -1,0 +1,4 @@
+201607211030   0     0     0yc E:\workspace4\Layers\Fdr = FLOWDIRECTION(E:\workspace4\Layers\Fil,  #, NORMAL)
+201607211031   0     0     0yc E:\workspace4\Layers\Fac = FLOWACCUMULATION(E:\workspace4\Layers\Fdr,  #, FLOAT)
+201607211032   0     0     0yc E:\workspace4\Layers\Str = CON(E:\workspace4\Layers\Fac <> 0, ( 1))
+201607211033   0     0     0yc E:\workspace4\Layers\StrLnk = STREAMLINK(E:\workspace4\Layers\Str, E:\workspace4\Layers\Fdr)

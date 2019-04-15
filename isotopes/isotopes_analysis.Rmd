@@ -1,0 +1,275 @@
+---
+title: "Stable Isotope Analysis"
+author: "Masumbuko Semba and Nyamisi Peter"
+date: "`r format(Sys.time(), 'On %d %B, %Y at %H:%M:%OS3')`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+link-citations: yes
+# csl: havard.csl
+bibliography: isotopes.bib
+---
+#Step 1: Loading the Data
+The first step involved loading the data into R workspace. @readxl developed *readxl* package that can read Microsoft Excel Spreadsheet directly from the local machine. The sheet number three that contains isotopic data was imported from the local machine into the workspace of [R](https://www.r-project.org/)---a free and open source software for statistical, computation, analysis and graphics [@r]
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, comment=""}
+setwd("E:/Data Manipulation/Kim/isotopes/")
+```
+
+```{r, comment="", message=FALSE, warning=FALSE}
+require(tidyverse)
+require(simmr)
+require(DT)
+require(cowplot)
+
+```
+
+
+```{r, comment=""}
+kim = readxl::read_excel("Clean_Data.xlsx", sheet = 3)%>%na.omit()
+kim$SpeciesName = as.factor(kim$SpeciesName)
+
+
+
+```
+
+```{r, comment=""}
+knitr::kable(kim, caption = "Table 1: Overview of Isotopes")
+```
+
+```{r, comment=""}
+knitr::kable(kim%>%group_by(SpeciesName)%>%count()%>%arrange(desc(n))%>%mutate(percentage = n/72*100), 
+             digits = 2, caption = "Table 2: Summary statistics of the six common species")
+```
+
+# Step 2: Getting the data into simmr
+Once we have the dataset in the workspace, we have to tidy in the format that *simmr* package understand [@tidyr] . This is because simmr requires at minimum 3 input objects; the *mixtures*, the *source* means, and the source *standard deviations* as matrix [@simmr].
+
+>Optionally, you can also add correction data (also called trophic enrichment factors, TEFs) represented again as means and standard deviations, and concentration dependence values. 
+
+```{r, comment=""}
+mix = kim%>%select(2,3)%>%as.matrix()
+
+```
+The created mix object contains the stable isotopic data for the consumers.  The matrix function was used to turn this into a matrix (a rectangle of numbers) with 2 columns. The first column contains the data for isotope 1, and the second the data for isotope 2. 
+
+```{r, comment=""}
+
+mean.data = kim%>%group_by(SpeciesName)%>%
+  summarise(d13C = mean(d13C), d15N = mean(d15N))%>%
+  ungroup()
+
+s_names = mean.data$SpeciesName
+s_means = mean.data[,2:3]%>%as.matrix()
+
+
+sd.data = kim%>%group_by(SpeciesName)%>%
+  summarise(d13C = sd(d13C), d15N = sd(d15N))%>%
+  ungroup()
+
+s_sds = sd.data[,2:3]%>%as.matrix()
+
+```
+
+
+```{r, comment=""}
+s_names = as.character(s_names)
+
+simmr.in = simmr_load(mixtures = mix,
+           source_names = s_names,
+           source_means = s_means,
+           source_sds = s_sds)
+```
+
+The source names was created in the s_names object, and the source means and standard deviations in s_means and s_sds were computed and converted to matrix format, where the number of rows is the number of species and column represent the mean and standard deviation of the isotopes.
+
+# Step 3: Plotting the data in iso-space
+```{r, comment="", fig.cap="Figure 1"}
+# iso.plot =  plot(simmr.in)
+
+simmr.in%>%
+  plot+
+  cowplot::theme_cowplot()+
+  theme(legend.background = element_rect(colour = 1), 
+               legend.position = c(0.12, 0.86))+
+  labs(x = expression(paste(delta^13, "C (\u2030)",sep="")), 
+     y=expression(paste(delta^15, "N (\u2030)",sep="")), 
+     title='Isospace plot')
+```
+
+
+# Step 4: running simmr
+The next step is to actually run the model.This command takes the object *simmr_in* we created earlier and uses it as input for the model. It tells simmr to store the output from the model run in an object called simmr_out. This is achieved with the command:
+
+```{r, comment=""}
+simmr.out = simmr_mcmc(simmr.in)
+```
+
+
+Markov chain Monte Carlo (MCMC) works by repeatedly guessing the values of the dietary proportions and find those values which fit the data best. The initial guesses are usually poor and are discarded as part of an initial phase known as the burn-in. Subsequent iterations are then stored and used for the posterior distribution; the best estimates of the dietary proportions given the data and the model. Because it can take many thousands of iterations to move away from the initial guesses, convergence diagnostics can be created to check the model has run properly. In simmr this is done with:
+
+```{r, comment=""}
+summary(simmr.out,type='diagnostics')
+
+```
+
+If the model run has converged properly the values should be close to 1. If they are above 1.1, we recommend a longer run. See help(simmr_mcmc) for how to do this. The values in this example seem to have converged well. You can alternatively plot the diagnostics with:
+
+# Step 5: exploring the model results
+simmr produces both textual and graphical summaries of the model run. Starting with the textual summaries, we can get tables of the means, standard deviations and credible intervals (the Bayesian equivalent of a confidence interval) with:
+```{r, comment=""}
+summary(simmr.out,type='statistics')
+
+```
+
+```{r, comment=""}
+summary(simmr.out,type='quantiles')
+
+```
+
+simmr can also produce histograms, boxplots, density plots, and matrix plots of the output. Starting with the density plot:
+```{r, comment="", fig.cap="Figure 2"}
+plot(simmr.out,type='density')
+```
+We can see that Zostera and Enteromorpha are poorly constrained in comparison to Grass and especially U.lactuca. Again this is unsurprising since the isospace plot indicated that these were the two most clearly separated sources.
+
+The most useful output plot is the matrix plot
+```{r, comment="", fig.cap="Figure 3"}
+plot(simmr.out,type='matrix')
+```
+This shows the source histograms on the diagonal, contour plots of the relationship between the sources on the upper diagonal, and the correlation between the sources on the lower diagonal. Large negative correlations indicate that the model cannot discern between the two sources; they may lie close together in iso-space. Large positive correlations are also possible when mixture data lie in a polygon consisting of multiple competing sources.
+
+If you want to compare the dietary proportions between two different sources, you can use the compare_sources function. This takes two or more sources and compares the dietary proportions with an optional plot. For example:
+```{r, comment="", fig.cap="Figure 4"}
+compare_sources(simmr.out,source_names=c('Brown algae','Green algae'))
+
+```
+
+```{r, comment="", fig.cap="Figure 5"}
+
+compare_sources(simmr.out,source_names=c('Phytoplankton','Zooplankton'))
+
+
+```
+
+```{r, comment="", fig.cap="Figure 6"}
+
+compare_sources(simmr.out,source_names=c('Benthos','Snail'))
+
+
+```
+
+
+
+This produces a direct probability that the dietary proportion for the first source is bigger than that of the second. If you want to compare more than two sources, specify them with:
+```{r, comment="", fig.cap="Figure 7"}
+compare_sources(simmr.out,source_names=c("Benthos","Brown algae","Green algae","Phytoplankton","Snail",         "Zooplankton"))
+
+```
+
+## Running simmr on multiple groups
+In many case we have data from different sampling locations. or different types of individuals (male/female) or different tissues (muscle and fin) and we compare between these groups. For our data we can compare betwen the sampling locations because the data were collected at eight different sites. We first create a group of habitat and simmr wants these variable to be as integer, we therefore convert the sites into integer.
+```{r}
+
+kim = kim%>%mutate(site = `Habitat/site`)%>%mutate(site = replace(site, site == "MB1", 1),
+                                              site = replace(site, site == "MB2", 2),
+                                              site = replace(site, site == "MB3", 3),
+                                              site = replace(site, site == "KMG1", 4),
+                                              site = replace(site, site == "KMG2", 5),
+                                              site = replace(site, site == "KMG3", 6),
+                                              site = replace(site, site == "SGK", 7),
+                                              site = replace(site, site == "MB SEA", 8))
+kim$site = as.integer(kim$site)
+
+sites = kim$site
+
+simmr.in.group = simmr_load(mixtures = mix,
+           source_names = s_names,
+           source_means = s_means,
+           source_sds = s_sds, 
+           group = sites)
+
+
+```
+
+```{r}
+plot(simmr.in.group, group = 1:8, mix_name='Site', colour = TRUE)+
+  cowplot::theme_cowplot()+
+  theme(legend.position = c(.75,.3))+
+  scale_y_continuous(breaks = seq(1,8,1))+
+  scale_x_continuous(breaks = seq(-30,-10,4))+
+  labs(x = expression(paste(delta^13, "C (\u2030)",sep="")), 
+     y=expression(paste(delta^15, "N (\u2030)",sep="")),  
+     title='Isospace plot ')
+```
+
+We notice that MB SEA habitat had only one sample, we can remove this from the analysis and plotting by changing the order of group
+```{r}
+
+plot(simmr.in.group, group = 1:7, mix_name='Site', colour = TRUE)+
+  cowplot::theme_cowplot()+
+  theme(legend.position = c(.75,.3))+
+  scale_y_continuous(breaks = seq(1,8,1))+
+  scale_x_continuous(breaks = seq(-30,-10,4))+
+  labs(x = expression(paste(delta^13, "C (\u2030)",sep="")), 
+     y=expression(paste(delta^15, "N (\u2030)",sep="")),  
+     title='Isospace plot ')
+```
+
+##  Markov chain Monte Carlo (MCMC) model
+```{r}
+simmr.out.group = simmr_mcmc(simmr.in.group)
+# simmr will run the model for each grou. 
+
+```
+
+model summary for group 1
+```{r}
+summary(simmr.out.group, type = "quantiles", group = 1)
+```
+
+model summary for group 1 to 3
+```{r}
+summary(simmr.out.group, type = "quantiles", group = c(1,5))
+```
+
+model summary for group 1 to 3
+```{r}
+summary(simmr.out.group, type = c("quantiles","statistics"), group = c(1,5))
+```
+
+```{r}
+summary.simmr_output(simmr.out.group)
+```
+
+
+
+for plotting the output of multiple group, we can only specify the group to plot
+
+```{r}
+plot(simmr.out.group, type = "boxplot", group = 4, title = "Boxplot for group 2")
+```
+
+We can combine density and matrix plot
+```{r}
+
+plot(simmr.out.group, type = c("density", "matrix"),  group = 4, title = "Density for Group 4")
+```
+
+We can compare dietary proportion of different groups,
+```{r}
+## all groups
+compare_groups(simmr.out.group, source = "Brown algae", groups =  1:3)
+
+## specify groups
+compare_groups(simmr.out.group, source = "Brown algae", groups =  c(5,8))
+
+```
+
+
+# Reference
+

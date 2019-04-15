@@ -1,0 +1,275 @@
+---
+title: "Stable Isotope Analysis"
+author: "Masumbuko Semba and Nyamisi Peter"
+date: "`r format(Sys.time(), 'On %d %B, %Y at %H:%M:%OS3')`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+link-citations: yes
+# csl: havard.csl
+bibliography: isotopes.bib
+---
+
+# Introduction
+In many case we have data from different sampling locations. or different types of individuals (male/female) or different tissues (muscle and fin) and we compare between these groups. For our data we can compare betwen the sampling locations because the data were collected at eight different sites. We first create a group of habitat and simmr wants these variable to be as integer, we therefore convert the sites into integer.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r, comment=""}
+setwd("E:/Data Manipulation/Kim/isotopes/")
+```
+
+```{r, comment="", message=FALSE, warning=FALSE}
+require(tidyverse)
+require(simmr)
+require(DT)
+require(cowplot)
+
+```
+
+# Loading the Data
+The first step involved loading the data into R workspace. @readxl developed *readxl* package that can read Microsoft Excel Spreadsheet directly from the local machine. The sheet number three that contains isotopic data was imported from the local machine into the workspace of [R](https://www.r-project.org/)---a free and open source software for statistical, computation, analysis and graphics [@r]
+```{r, comment=""}
+## read the file
+kim = readxl::read_excel("Clean_Data.xlsx", sheet = 1)%>%na.omit()
+
+```
+
+# Tidy the data
+```{r}
+## tidy the data
+kim = kim%>%
+    separate(Sample, c("Sample", "number"), sep = 1, remove = T)%>%
+    mutate(site.grp = Site, sample = Sample,
+         site.grp = replace(site.grp, site.grp == "Kunduchi", 1),
+         site.grp = replace(site.grp, site.grp == "Mbegani", 2),
+         sample = replace(sample, sample == "F", 1),
+         sample = replace(sample, sample == "T", 2))%>%
+    select(-number, Species = Spp, Area = Site,  Site = site.grp)
+## convert the character into integer
+kim$Site = as.integer(kim$Site)
+kim$sample = as.integer(kim$sample)
+
+
+```
+
+```{r, comment=""}
+knitr::kable(kim, caption = "Table 1: Overview of Isotopes")
+```
+
+```{r, comment=""}
+knitr::kable(kim%>%group_by(Area,Species, Sample)%>%count()%>%arrange(Area, Species)%>%mutate(percentage = n/84*100), digits = 2, caption = "Table 2: Summary statistics of the three species", align = "l")
+```
+
+# Getting the data into simmr
+Once we have the dataset in the workspace, we have to tidy in the format that *simmr* package understand [@tidyr] . This is because simmr requires at minimum 3 input objects; the *mixtures*, the *source* means, and the source *standard deviations* as matrix [@simmr].
+
+>Optionally, you can also add correction data (also called trophic enrichment factors, TEFs) represented again as means and standard deviations, and concentration dependence values. 
+
+```{r, comment=""}
+mix = kim%>%select(1,2)%>%as.matrix()
+
+```
+The created mix object contains the stable isotopic data for the consumers.  The matrix function was used to turn this into a matrix (a rectangle of numbers) with 2 columns. The first column contains the data for isotope 1, and the second the data for isotope 2. 
+
+
+
+```{r, comment=""}
+
+mean.data = kim%>%group_by(Species)%>%
+  summarise(d13C = mean(d13C), d15N = mean(d15N))%>%
+  ungroup()
+
+s_means = mean.data[,2:3]%>%as.matrix()
+
+
+sd.data = kim%>%group_by(Species)%>%
+  summarise(d13C = sd(d13C), d15N = sd(d15N))%>%
+  ungroup()
+
+s_sds = sd.data[,2:3]%>%as.matrix()
+
+s_names = mean.data$Species
+
+
+```
+
+## Comparison between Kunduchi and Mbegani Sites
+```{r}
+sites = kim$Site
+
+simmr.in.group.sites = simmr_load(mixtures = mix,
+           source_names = s_names,
+           source_means = s_means,
+           source_sds = s_sds, 
+           group = sites)
+
+```
+
+
+### plotting
+
+```{r}
+plot(simmr.in.group.sites, group = 1:2, mix_name='Site', colour = TRUE)+
+  cowplot::theme_cowplot()+
+  # theme(legend.position = c(.75,.3))+
+  # scale_y_continuous(breaks = seq(1,8,1))+
+  # scale_x_continuous(breaks = seq(-30,-10,4))+
+  labs(x = expression(paste(delta^13, "C (\u2030)",sep="")), 
+     y=expression(paste(delta^15, "N (\u2030)",sep="")),  
+     title='Isospace plot ')
+```
+
+
+
+##  Markov chain Monte Carlo (MCMC) model
+```{r}
+simmr.out.group.sites = simmr_mcmc(simmr.in.group.sites)
+# simmr will run the model for each grou. 
+
+```
+
+### summary
+#### model accuracy
+```{r}
+summary.sites = summary.simmr_output(simmr.out.group.sites)
+summary.sites$gelman$group_1%>%as.data.frame()%>%knitr::kable(digits = 3, caption = "The model accuracy is validated with the Gelman diagonistics---these values should be close to 1")
+```
+
+#### statistics
+```{r}
+summary.sites$statistics$group_1%>%as.data.frame()%>%knitr::kable(digits = 3, caption = "Summary statistics")
+
+```
+
+#### correlatiobs
+```{r}
+summary.sites$correlations$group_1%>%as.data.frame()%>%knitr::kable(digits = 3, caption = "Correlations")
+
+```
+
+
+### Plotting model ouputs
+
+#### boxplot
+```{r, fig.cap="Proportion of isotopes at Kunduchi"}
+plot(simmr.out.group.sites, type = "boxplot", group = 1)
+
+```
+
+
+```{r, fig.cap="Proportion of isotopes at Mbegani"}
+plot(simmr.out.group.sites, type = "boxplot", group = 2)
+
+```
+
+#### compare dietary proportion between sites,
+```{r, fig.cap="Dietary proportion of G.filamentosus between Kunduchi (Group1) and Mbegani (Group2)"}
+compare_groups(simmr.out.group.sites, source = "G.filamentosus", groups =  1:2)
+
+```
+
+
+```{r, fig.cap="Dietary proportion of G.oyena between Kunduchi (Group1) and Mbegani (Group2)"}
+compare_groups(simmr.out.group.sites, source = "G.oyena", groups =  1:2)
+
+```
+
+```{r, fig.cap="Dietary proportion of S.barracuda between Kunduchi (Group1) and Mbegani (Group2)"}
+compare_groups(simmr.out.group.sites, source = "S.barracuda", groups =  1:2)
+
+```
+
+
+
+
+
+## Comparison between Muscle and Fin tissues 
+```{r}
+tissue = kim$sample
+
+simmr.in.group.sample = simmr_load(mixtures = mix,
+           source_names = s_names,
+           source_means = s_means,
+           source_sds = s_sds, 
+           group = tissue)
+
+```
+
+### plotting
+
+```{r, fig.cap= "Isospace Plot between tissues"}
+plot(simmr.in.group.sample, group = 1:2, mix_name='Tissue', colour = TRUE)+
+  cowplot::theme_cowplot()+
+  # theme(legend.position = c(.75,.3))+
+  # scale_y_continuous(breaks = seq(1,8,1))+
+  # scale_x_continuous(breaks = seq(-30,-10,4))+
+  labs(x = expression(paste(delta^13, "C (\u2030)",sep="")), 
+     y=expression(paste(delta^15, "N (\u2030)",sep="")),  
+     title='Isospace plot ')
+```
+
+
+##  Markov chain Monte Carlo (MCMC) model
+```{r}
+simmr.out.group.sample = simmr_mcmc(simmr.in.group.sample)
+# simmr will run the model for each grou. 
+
+```
+
+### summary
+#### model accuracy
+```{r}
+summary.sample = summary.simmr_output(simmr.out.group.sample)
+summary.sample$gelman$group_1%>%as.data.frame()%>%knitr::kable(digits = 3, caption = "The model accuracy is validated with the Gelman diagonistics---these values should be close to 1")
+```
+
+#### statistics
+```{r}
+summary.sample$statistics$group_1%>%as.data.frame()%>%knitr::kable(digits = 3, caption = "Summary statistics")
+
+```
+
+#### correlatiobs
+```{r}
+summary.sample$correlations$group_1%>%as.data.frame()%>%knitr::kable(digits = 3, caption = "Correlations")
+
+```
+
+
+### Plotting model ouputs
+
+#### boxplot
+```{r, fig.cap="Proportion of isotopes in Fins"}
+plot(simmr.out.group.sample, type = "boxplot", group = 1)
+
+```
+
+
+```{r, fig.cap="Proportion of isotopes in Muscle"}
+plot(simmr.out.group.sample, type = "boxplot", group = 2)
+
+```
+
+#### compare dietary proportion between sites,
+```{r, fig.cap="Dietary proportion of G.filamentosus between Fins (Group1) and Muscles (Group2)"}
+compare_groups(simmr.out.group.sample, source = "G.filamentosus", groups =  1:2)
+
+```
+
+
+```{r, fig.cap="Dietary proportion of G.oyena between Fins (Group1) and Muscle (Group2)"}
+compare_groups(simmr.out.group.sample, source = "G.oyena", groups =  1:2)
+
+```
+
+```{r, fig.cap="Dietary proportion of S.barracuda between Fins (Group1) and Muscles (Group2)"}
+compare_groups(simmr.out.group.sample, source = "S.barracuda", groups =  1:2)
+
+```
+
+# References
+
